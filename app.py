@@ -97,10 +97,15 @@ def get_username_from_graph(sender_id: str):
 # ---------------------------
 
 def build_message(category: str, username, sender_id: str, text: str):
-
     who = f"@{username}" if username else f"(id:{sender_id})"
 
-    return f"#{category} | {who} | {IG_PAGE_URL}\n{text}".strip()
+    # ✅ لینک پویا: اگر یوزرنیم داریم → لینک پروفایل فرستنده
+    if username:
+        link = f"https://www.instagram.com/{username}/"
+    else:
+        link = IG_DEFAULT_PAGE_URL  # fallback به پیج خودتان
+
+    return f"#{category} | {who} | {link}\n{text}".strip()
 
 
 def send_to_telegram(text: str) -> None:
