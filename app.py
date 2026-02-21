@@ -10,25 +10,29 @@ TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TG_THREAD_ID = os.getenv("TELEGRAM_THREAD_ID", "")  # optional
 
-# توکن متای فعلی شما
-META_ACCESS_TOKEN = os.getenv("IG_TOKEN", "")
+# توکن متا (همان IG_TOKEN شما)
+META_ACCESS_TOKEN = os.getenv("IG_TOKEN", "").strip()
 
 # لینک پیشفرض (اگر یوزرنیم نگرفتیم)
 IG_DEFAULT_PAGE_URL = os.getenv(
     "IG_DEFAULT_PAGE_URL",
     "https://www.instagram.com/iranazadinews/"
-)
+).strip()
 
 USERNAME_CACHE = {}
+
+# ---- Token health (to avoid hammering Graph API)
+TOKEN_CHECKED = False
+TOKEN_OK = False
+
 
 # ---------------------------
 # دسته‌بندی پیام
 # ---------------------------
 
 BAD_WORDS = [
-    "کص", "کیر", "fuck", "sex", "تبلیغ", "پولدارشو",
-    "جاوید شاه", "شاهزاده", "منافق", "منافقین",
-    "سه فاسد", "جانم فدای رهبری", "شرط بندی"
+    "کص", "کیر", "fuck", "sex", "تبلیغ", "پولدارشو", "جاوید شاه", "شاهزاده",
+    "منافق", "منافقین", "سه فاسد", "جانم فدای رهبری", "شرط بندی"
 ]
 
 TEAM_WORDS = ["همکاری", "ادمین", "مدیریت", "تیم", "ارتباط", "تماس"]
@@ -60,12 +64,56 @@ def classify(text: str) -> str:
 
 
 # ---------------------------
+# بررسی صحت توکن (یک‌بار)
+# ---------------------------
+
+def check_token_once():
+    global TOKEN_CHECKED, TOKEN_OK
+
+    if TOKEN_CHECKED:
+        return TOKEN_OK
+
+    TOKEN_CHECKED = True
+
+    if not META_ACCESS_TOKEN:
+        print("META TOKEN MISSING: IG_TOKEN is empty")
+        TOKEN_OK = False
+        return TOKEN_OK
+
+    # لاگ امن: فقط طول و چند حرف ابتدا/انتها
+    safe_preview = f"{META_ACCESS_TOKEN[:6]}...{META_ACCESS_TOKEN[-6:]}"
+    print("META TOKEN preview (safe):", safe_preview, "len=", len(META_ACCESS_TOKEN))
+
+    # تست ساده به /me
+    try:
+        url = "https://graph.facebook.com/v21.0/me"
+        r = requests.get(url, params={"access_token": META_ACCESS_TOKEN}, timeout=10)
+
+        if r.status_code == 200:
+            TOKEN_OK = True
+            print("META TOKEN OK")
+            return TOKEN_OK
+
+        print("META TOKEN INVALID:", r.status_code, (r.text or "")[:300])
+        TOKEN_OK = False
+        return TOKEN_OK
+
+    except Exception as e:
+        print("META TOKEN CHECK ERROR:", repr(e))
+        TOKEN_OK = False
+        return TOKEN_OK
+
+
+# ---------------------------
 # گرفتن یوزرنیم از متا
 # ---------------------------
 
 def get_username_from_graph(sender_id: str):
+    if not sender_id or sender_id == "unknown":
+        return None
 
-    if not META_ACCESS_TOKEN or not sender_id or sender_id == "unknown":
+    # اگر توکن خراب است، اصلاً تلاش نکن
+    if not check_token_once():
         return None
 
     if sender_id in USERNAME_CACHE:
@@ -73,27 +121,20 @@ def get_username_from_graph(sender_id: str):
 
     try:
         url = f"https://graph.facebook.com/v21.0/{sender_id}"
-
         r = requests.get(
             url,
-            params={
-                "fields": "username,name",
-                "access_token": META_ACCESS_TOKEN
-            },
+            params={"fields": "username", "access_token": META_ACCESS_TOKEN},
             timeout=10,
         )
-
-        # 🔎 لاگ تشخیصی (خیلی مهم برای مرحله بعد)
-        print("Graph lookup status:", r.status_code)
-        print("Graph response:", r.text[:500])
 
         if r.status_code == 200:
             data = r.json()
             username = data.get("username")
-
             if username:
                 USERNAME_CACHE[sender_id] = username
                 return username
+
+        print("username lookup failed:", r.status_code, (r.text or "")[:200])
 
     except Exception as e:
         print("username lookup error:", repr(e))
@@ -106,10 +147,9 @@ def get_username_from_graph(sender_id: str):
 # ---------------------------
 
 def build_message(category: str, username, sender_id: str, text: str):
-
     who = f"@{username}" if username else f"(id:{sender_id})"
 
-    # لینک پویا
+    # لینک پویا: اگر یوزرنیم داریم → لینک پروفایل فرستنده
     if username:
         link = f"https://www.instagram.com/{username}/"
     else:
@@ -131,7 +171,10 @@ def send_to_telegram(text: str) -> None:
     }
 
     if TG_THREAD_ID:
-        payload["message_thread_id"] = int(TG_THREAD_ID)
+        try:
+            payload["message_thread_id"] = int(TG_THREAD_ID)
+        except ValueError:
+            print("Invalid TELEGRAM_THREAD_ID")
 
     try:
         r = requests.post(url, json=payload, timeout=10)
@@ -171,12 +214,9 @@ def webhook():
                 sender_id = (m.get("sender", {}) or {}).get("id", "unknown")
 
                 category = classify(text)
-
-                # گرفتن یوزرنیم
                 username = get_username_from_graph(sender_id)
 
                 out = build_message(category, username, sender_id, text)
-
                 send_to_telegram(out)
 
     except Exception as e:
