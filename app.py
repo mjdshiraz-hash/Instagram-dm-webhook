@@ -3,6 +3,7 @@ import requests
 from flask import Flask, request
 
 app = Flask(__name__)
+IG_DEFAULT_PAGE_URL = os.getenv("IG_DEFAULT_PAGE_URL", "https://www.instagram.com/iranazadinews/")
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "change-me")
 
