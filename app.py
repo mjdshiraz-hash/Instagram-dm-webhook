@@ -10,60 +10,46 @@ TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TG_THREAD_ID = os.getenv("TELEGRAM_THREAD_ID", "")  # optional
 
-# ---- NEW: Meta + IG page settings
-# اگر ENV تو اسم دیگری دارد، من چند تا نام را هم چک می‌کنم:
-META_ACCESS_TOKEN = (
-    os.getenv("META_ACCESS_TOKEN", "")
-    or os.getenv("META_TOKEN", "")
-    or os.getenv("FACEBOOK_ACCESS_TOKEN", "")
-    or os.getenv("GRAPH_API_TOKEN", "")
-)
+# ✅ همین توکن فعلی تو
+META_ACCESS_TOKEN = os.getenv("IG_TOKEN", "")
 
+# لینک پیج (اگر نساختی خودش این را استفاده میکند)
 IG_PAGE_URL = os.getenv("IG_PAGE_URL", "https://www.instagram.com/iranazadinews/")
 
-# ---- NEW: simple in-memory cache for usernames
 USERNAME_CACHE = {}
 
 
 # ---------------------------
-# 1) Rule Engine (Model A)
+# دسته‌بندی پیام
 # ---------------------------
 
 BAD_WORDS = [
-    "کص", "کیر", "fuck", "sex", "تبلیغ", "پولدارشو", "جاوید شاه", "شاهزاده", "منافق", "منافقین", "سه فاسد", "جانم فدای رهبری", "شرط بندی"
+    "کص", "کیر", "fuck", "sex", "تبلیغ", "پولدارشو",
+    "جاوید شاه", "شاهزاده", "منافق", "منافقین",
+    "سه فاسد", "جانم فدای رهبری", "شرط بندی"
 ]
-TEAM_WORDS = [
-    "همکاری", "ادمین", "مدیریت", "تیم", "ارتباط", "تماس", "همکار", "پشتیبانی"
-]
-NEWS_WORDS = [
-    "خبر", "گزارش", "فوری", "ویدیو", "فیلم", "عکس", "سند", "مدرک"
-]
+TEAM_WORDS = ["همکاری", "ادمین", "مدیریت", "تیم", "ارتباط", "تماس"]
+NEWS_WORDS = ["خبر", "گزارش", "فوری", "ویدیو", "فیلم", "عکس", "سند"]
 
 
 def classify(text: str) -> str:
-    """Return one of: general, team, news, links, spam, long"""
     if not text:
         return "general"
 
-    t = text.strip().lower()
+    t = text.lower()
 
-    # links
-    if "http://" in t or "https://" in t or "t.me/" in t or "instagram.com/" in t:
+    if "http" in t or "t.me/" in t or "instagram.com/" in t:
         return "links"
 
-    # spam / abuse
     if any(w in t for w in BAD_WORDS):
         return "spam"
 
-    # team / collaboration
     if any(w in t for w in TEAM_WORDS):
         return "team"
 
-    # news / reports
     if any(w in t for w in NEWS_WORDS):
         return "news"
 
-    # long messages
     if len(t) > 300:
         return "long"
 
@@ -71,14 +57,11 @@ def classify(text: str) -> str:
 
 
 # ---------------------------
-# 2) Username lookup (Graph API)
+# گرفتن یوزرنیم از متا
 # ---------------------------
 
 def get_username_from_graph(sender_id: str):
-    """
-    Try to resolve sender_id to Instagram username via Graph API.
-    Returns string username without '@' OR None if not available.
-    """
+
     if not META_ACCESS_TOKEN or not sender_id or sender_id == "unknown":
         return None
 
@@ -92,15 +75,16 @@ def get_username_from_graph(sender_id: str):
             params={"fields": "username", "access_token": META_ACCESS_TOKEN},
             timeout=10,
         )
+
         if r.status_code == 200:
             data = r.json()
             username = data.get("username")
             if username:
                 USERNAME_CACHE[sender_id] = username
                 return username
-        else:
-            # برای دیباگ سبک (بدون لو رفتن توکن)
-            print("username lookup non-200:", r.status_code, (r.text or "")[:200])
+
+        print("username lookup failed:", r.status_code)
+
     except Exception as e:
         print("username lookup error:", repr(e))
 
@@ -108,18 +92,19 @@ def get_username_from_graph(sender_id: str):
 
 
 # ---------------------------
-# 3) Telegram formatting + sender
+# ساخت پیام تلگرام
 # ---------------------------
 
-def build_message(category: str, username, sender_id: str, text: str) -> str:
-    # Option 1 + category + clickable page link
-    who = f"@{username}" if username else f"(id:{sender_id or 'unknown'})"
+def build_message(category: str, username, sender_id: str, text: str):
+
+    who = f"@{username}" if username else f"(id:{sender_id})"
+
     return f"#{category} | {who} | {IG_PAGE_URL}\n{text}".strip()
 
 
 def send_to_telegram(text: str) -> None:
     if not TG_TOKEN or not TG_CHAT_ID:
-        print("Telegram not configured: missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
+        print("Telegram not configured")
         return
 
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
@@ -128,21 +113,19 @@ def send_to_telegram(text: str) -> None:
         "text": text,
         "disable_web_page_preview": True,
     }
+
     if TG_THREAD_ID:
-        try:
-            payload["message_thread_id"] = int(TG_THREAD_ID)
-        except ValueError:
-            print("Invalid TELEGRAM_THREAD_ID; must be an integer.")
+        payload["message_thread_id"] = int(TG_THREAD_ID)
 
     try:
         r = requests.post(url, json=payload, timeout=10)
-        print("Telegram sendMessage status:", r.status_code, r.text[:300])
+        print("Telegram:", r.status_code)
     except Exception as e:
-        print("Telegram sendMessage error:", repr(e))
+        print("Telegram error:", repr(e))
 
 
 # ---------------------------
-# 4) Webhook endpoints
+# Webhook
 # ---------------------------
 
 @app.get("/webhook")
@@ -160,18 +143,12 @@ def verify():
 def webhook():
     data = request.get_json(silent=True) or {}
 
-    # log safe summary
-    entries = data.get("entry", []) or []
-    print("WEBHOOK: keys=", list(data.keys()), "entries=", len(entries))
-
     try:
-        for entry in entries:
-            messaging = entry.get("messaging", []) or []
-            for m in messaging:
+        for entry in data.get("entry", []):
+            for m in entry.get("messaging", []):
                 msg = m.get("message", {}) or {}
-                text = msg.get("text", "")
+                text = msg.get("text")
 
-                # Only text messages for now
                 if not text:
                     continue
 
@@ -179,10 +156,11 @@ def webhook():
 
                 category = classify(text)
 
-                # NEW: try to get @username
+                # ⭐ اینجا یوزرنیم گرفته می‌شود
                 username = get_username_from_graph(sender_id)
 
                 out = build_message(category, username, sender_id, text)
+
                 send_to_telegram(out)
 
     except Exception as e:
