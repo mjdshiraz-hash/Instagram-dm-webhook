@@ -3,7 +3,6 @@ import requests
 from flask import Flask, request
 
 app = Flask(__name__)
-IG_DEFAULT_PAGE_URL = os.getenv("IG_DEFAULT_PAGE_URL", "https://www.instagram.com/iranazadinews/")
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "change-me")
 
@@ -11,14 +10,16 @@ TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TG_THREAD_ID = os.getenv("TELEGRAM_THREAD_ID", "")  # optional
 
-# ✅ همین توکن فعلی تو
+# توکن متای فعلی شما
 META_ACCESS_TOKEN = os.getenv("IG_TOKEN", "")
 
-# لینک پیج (اگر نساختی خودش این را استفاده میکند)
-IG_PAGE_URL = os.getenv("IG_PAGE_URL", "https://www.instagram.com/iranazadinews/")
+# لینک پیشفرض (اگر یوزرنیم نگرفتیم)
+IG_DEFAULT_PAGE_URL = os.getenv(
+    "IG_DEFAULT_PAGE_URL",
+    "https://www.instagram.com/iranazadinews/"
+)
 
 USERNAME_CACHE = {}
-
 
 # ---------------------------
 # دسته‌بندی پیام
@@ -29,6 +30,7 @@ BAD_WORDS = [
     "جاوید شاه", "شاهزاده", "منافق", "منافقین",
     "سه فاسد", "جانم فدای رهبری", "شرط بندی"
 ]
+
 TEAM_WORDS = ["همکاری", "ادمین", "مدیریت", "تیم", "ارتباط", "تماس"]
 NEWS_WORDS = ["خبر", "گزارش", "فوری", "ویدیو", "فیلم", "عکس", "سند"]
 
@@ -71,20 +73,27 @@ def get_username_from_graph(sender_id: str):
 
     try:
         url = f"https://graph.facebook.com/v21.0/{sender_id}"
+
         r = requests.get(
             url,
-            params={"fields": "username", "access_token": META_ACCESS_TOKEN},
+            params={
+                "fields": "username,name",
+                "access_token": META_ACCESS_TOKEN
+            },
             timeout=10,
         )
+
+        # 🔎 لاگ تشخیصی (خیلی مهم برای مرحله بعد)
+        print("Graph lookup status:", r.status_code)
+        print("Graph response:", r.text[:500])
 
         if r.status_code == 200:
             data = r.json()
             username = data.get("username")
+
             if username:
                 USERNAME_CACHE[sender_id] = username
                 return username
-
-        print("username lookup failed:", r.status_code)
 
     except Exception as e:
         print("username lookup error:", repr(e))
@@ -97,13 +106,14 @@ def get_username_from_graph(sender_id: str):
 # ---------------------------
 
 def build_message(category: str, username, sender_id: str, text: str):
+
     who = f"@{username}" if username else f"(id:{sender_id})"
 
-    # ✅ لینک پویا: اگر یوزرنیم داریم → لینک پروفایل فرستنده
+    # لینک پویا
     if username:
         link = f"https://www.instagram.com/{username}/"
     else:
-        link = IG_DEFAULT_PAGE_URL  # fallback به پیج خودتان
+        link = IG_DEFAULT_PAGE_URL
 
     return f"#{category} | {who} | {link}\n{text}".strip()
 
@@ -162,7 +172,7 @@ def webhook():
 
                 category = classify(text)
 
-                # ⭐ اینجا یوزرنیم گرفته می‌شود
+                # گرفتن یوزرنیم
                 username = get_username_from_graph(sender_id)
 
                 out = build_message(category, username, sender_id, text)
